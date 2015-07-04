@@ -21,100 +21,160 @@ import java.io.OutputStreamWriter;
 import java.io.PrintWriter;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
+import java.util.HashMap;
 public class ElfPaser {
 	
 	String toolsFileUrl = "";
-	String path = "";
-	String despath = "";
-	String binpath = "";
+	String elf_path = "";
+	String hex_elf_path = "";
+	String single_hexelf_path = "";
 	ArrayList<Section_head_struct> section_head_list = new ArrayList<>();
 	Elf_head_struct elf_head_struct = new Elf_head_struct();
 	ArrayList<String> strTabs = new ArrayList<>();
+	File elf_file = null;
+	File hex_elf_file = null;
 	
-	public void readElf(File file){
-		toolsFileUrl = System.getProperty("user.dir")+"\\tools";
-		path = file.getAbsolutePath();
-		despath = path.replace(".so", ".txt");
-		binpath = path.replace(".so", "_hex.txt");
-		//parse .so to binary
-		format(file);
-		//parse elf header
-		String elf_head_str = getLine(binpath, 1, 4);
-		String[] elf_head_bytes = elf_head_str.replace("\r\n", "").trim().split(" ");
-		for (int i = 0; i < 16; i++) {
-			elf_head_struct.e_ident[i] = elf_head_bytes[i];
+	public ElfPaser(String elfpath){
+		this.toolsFileUrl = System.getProperty("user.dir")+"\\tools";
+		this.elf_file = new File(elfpath);
+		this.elf_path = elfpath;
+		this.hex_elf_path = elfpath.replace(".so", "_hex.txt");
+		this.single_hexelf_path = elfpath.replace(".so", "_hex_single.txt");
+	}
+	
+	
+	public void readElf(){
+		
+		/*
+		 * 将so文件解析成16进制机器代码
+		 */
+		parseElf2Hex(elf_file);
+		/*
+		 * 将16进制机器代码转变成4字节一行的机器代码
+		 */
+		parseHex2SingleHex(hex_elf_file);
+		/*
+		 * 解析elf header
+		 */
+		this.parseElfHeader();
+		/*
+		 * 解析section header 
+		 */
+		this.parseSectionsHeader();
+		/*
+		 * 解析每一个 section
+		 */
+		int sectionNums = this.section_head_list.size();
+		for (int i = 0; i < sectionNums; i++) {
+			Section_head_struct section_head_struct = section_head_list.get(i);
+			/*
+			 * 解析 .text section
+			 */
+			if (section_head_struct.sh_name.equals(".text")) {
+				this.parseTextSection(section_head_struct);
+			}
 		}
-		elf_head_struct.e_type += elf_head_bytes[17] + elf_head_bytes[16];
-		elf_head_struct.e_machine += elf_head_bytes[19] + elf_head_bytes[18];
-		elf_head_struct.e_version += elf_head_bytes[23] + elf_head_bytes[22] + elf_head_bytes[21] + elf_head_bytes[20];
-		elf_head_struct.e_entry += elf_head_bytes[27] + elf_head_bytes[26] + elf_head_bytes[25] + elf_head_bytes[24];
-		elf_head_struct.e_phoff += elf_head_bytes[31] + elf_head_bytes[30] + elf_head_bytes[29] + elf_head_bytes[28];
-		elf_head_struct.e_shoff += elf_head_bytes[35] + elf_head_bytes[34] + elf_head_bytes[33] + elf_head_bytes[32];
-		elf_head_struct.e_flags += elf_head_bytes[39] + elf_head_bytes[38] + elf_head_bytes[37] + elf_head_bytes[36];
-		elf_head_struct.e_ehsize += elf_head_bytes[41] + elf_head_bytes[40];
-		elf_head_struct.e_phentsize += elf_head_bytes[43] + elf_head_bytes[42];
-		elf_head_struct.e_phnum += elf_head_bytes[45] + elf_head_bytes[44];
-		elf_head_struct.e_shentsize += elf_head_bytes[47] + elf_head_bytes[46];
-		elf_head_struct.e_shnum += elf_head_bytes[49] + elf_head_bytes[48];
-		elf_head_struct.e_shstrndx += elf_head_bytes[51] + elf_head_bytes[50];
-		//parse section
-		long e_shoff = Integer.parseInt(elf_head_struct.e_shoff, 16);
-		long e_shnum = Integer.parseInt(elf_head_struct.e_shnum, 16);
-		long e_shentsize = Integer.parseInt(elf_head_struct.e_shentsize, 16);
-		parseSections(e_shoff, (int)e_shnum, e_shentsize);
+		
 		
 
 	}
 	
-	public void parseSections(long start,int num,long size){
-		//读取section header table
-		//找出section name string table
+	/*
+	 * 解析elf head
+	 */
+	private void parseElfHeader(){
+		String elf_head_string = this.getMultiLineString(single_hexelf_path, 0, 13);
+		int elf_head_byteCount = elf_head_string.length()/2;
+		char[] charArr = elf_head_string.toCharArray();
+		ArrayList<String> elf_head_bytes = new ArrayList<>();
+		for (int i = 0; i < elf_head_byteCount; i++) {
+			elf_head_bytes.add(""+charArr[i*2]+charArr[i*2+1]);
+		}
+		for (int i = 0; i < 16; i++) {
+			elf_head_struct.e_ident[i] = elf_head_bytes.get(i);
+		}
+		elf_head_struct.e_type += elf_head_bytes.get(17) + elf_head_bytes.get(16);
+		elf_head_struct.e_machine += elf_head_bytes.get(19) + elf_head_bytes.get(18);
+		elf_head_struct.e_version += elf_head_bytes.get(23) + elf_head_bytes.get(22)+elf_head_bytes.get(21)+elf_head_bytes.get(20);
+		elf_head_struct.e_entry += elf_head_bytes.get(27) + elf_head_bytes.get(26)+elf_head_bytes.get(25)+elf_head_bytes.get(24);
+		elf_head_struct.e_phoff += elf_head_bytes.get(31) + elf_head_bytes.get(30)+elf_head_bytes.get(29)+elf_head_bytes.get(28);
+		elf_head_struct.e_shoff += elf_head_bytes.get(35) + elf_head_bytes.get(34)+elf_head_bytes.get(33)+elf_head_bytes.get(32);
+		elf_head_struct.e_flags += elf_head_bytes.get(39) + elf_head_bytes.get(38)+elf_head_bytes.get(37)+elf_head_bytes.get(36);
+		elf_head_struct.e_ehsize += elf_head_bytes.get(41) + elf_head_bytes.get(40);
+		elf_head_struct.e_phentsize += elf_head_bytes.get(43) + elf_head_bytes.get(42);
+		elf_head_struct.e_phnum += elf_head_bytes.get(45) + elf_head_bytes.get(44);
+		elf_head_struct.e_shentsize += elf_head_bytes.get(47) + elf_head_bytes.get(46);
+		elf_head_struct.e_shnum += elf_head_bytes.get(49) + elf_head_bytes.get(48);
+		elf_head_struct.e_shstrndx += elf_head_bytes.get(51) + elf_head_bytes.get(50);
+	}
+	
+	/*
+	 * 解析section header以及获得section name table
+	 */
+	private void parseSectionsHeader(){
+		
+		long start = Integer.parseInt(elf_head_struct.e_shoff, 16);
+		long sectionNum = Integer.parseInt(elf_head_struct.e_shnum, 16);
 		String strTabIndexs = "";
-		for (int i = 0; i < num; i++) {
-			
+		String[] fields = {"sh_name","sh_type","sh_flags","sh_addr","sh_offset",
+						   "sh_size","sh_link","sh_info","sh_addralign","sh_entsize"};
+		
+		for (int i = 0; i < sectionNum; i++) {
+			int lineNumStart = (int)start/4+1;
+			int LineNumEnd = ((int)start+39)/4+1;
+			String section_header_string = this.getMultiLineString(this.single_hexelf_path, lineNumStart, LineNumEnd);
 			Section_head_struct section_head_struct = new Section_head_struct();
-			section_head_struct.sh_name = dealHead((int)start, (int)start+3);
-			start+=4;
-			section_head_struct.sh_type = dealHead((int)start, (int)start+3);
-			start+=4;
-			section_head_struct.sh_flags = dealHead((int)start, (int)start+3);
-			start+=4;
-			section_head_struct.sh_addr = dealHead((int)start, (int)start+3);
-			start+=4;
-			section_head_struct.sh_offset = dealHead((int)start, (int)start+3);
-			start+=4;
-			section_head_struct.sh_size = dealHead((int)start, (int)start+3);
-			start+=4;
-			section_head_struct.sh_link = dealHead((int)start, (int)start+3);
-			start+=4;
-			section_head_struct.sh_info = dealHead((int)start, (int)start+3);
-			start+=4;
-			section_head_struct.sh_addralign = dealHead((int)start, (int)start+3);
-			start+=4;
-			section_head_struct.sh_entsize = dealHead((int)start, (int)start+3);
-			start+=4;
+			for (int j = 0; j < fields.length; j++) {
+				String filed = fields[j];
+				String tmp = section_header_string.substring(j*8, (j+1)*8);
+				char[] chararr = tmp.toCharArray();
+				ArrayList<String> bytes = new ArrayList<>();
+				for (int jj = 0; jj < 8; jj++) {
+					bytes.add(""+chararr[jj++]+chararr[jj]);
+				}
+				String value = bytes.get(3)+bytes.get(2)+bytes.get(1)+bytes.get(0);
+				try {
+					section_head_struct.getClass().getField(filed).set(section_head_struct, value);
+				} catch (Exception e) {
+					e.printStackTrace();
+				} 
+			}
+			
 			if (Integer.parseInt(section_head_struct.sh_type, 16) == 3) {
 				strTabIndexs+=" "+i;
 			}
 			section_head_list.add(section_head_struct);
+			start += 40;
 		}
+		
+		
 		Section_head_struct strTable_section_struct = new Section_head_struct();
 		String strTabIndex[] = strTabIndexs.trim().split(" ");
-		
 		for (int i = 0; i < strTabIndex.length; i++) {
-			String strTab_bin_content = "";
 			strTable_section_struct= section_head_list.get(Integer.parseInt(strTabIndex[i]));
-			int sh_offset = Integer.parseInt(strTable_section_struct.sh_offset, 16);
-			strTab_bin_content += dealHeadSection(sh_offset,sh_offset + Integer.parseInt(strTable_section_struct.sh_size, 16)-1);
+			int strTab_start = Integer.parseInt(strTable_section_struct.sh_offset, 16);
+			int strTab_size= Integer.parseInt(strTable_section_struct.sh_size, 16);
+			int strTab_end = strTab_start + strTab_size - 1;
+			
+			int startLineNum = strTab_start/4+1;
+			int startLineOffset = strTab_start%4;
+			int endLineNum = strTab_end/4+1;
+			String strTab_bin_content = "";
+			String strTab_bin_string = this.getMultiLineString(this.single_hexelf_path, startLineNum, endLineNum);
+			strTab_bin_string = strTab_bin_string.substring(startLineOffset*2, startLineOffset*2+strTab_size*2);
+			char[] strTab_char_arr = strTab_bin_string.toCharArray();
+			int strTab_byte_count = strTab_bin_string.length()/2;
+			for (int j = 0; j < strTab_byte_count; j++) {
+				int dec = Integer.parseInt(""+strTab_char_arr[j*2]+strTab_char_arr[j*2+1], 16);
+				strTab_bin_content+=String.format("%c",dec);
+			}
 			strTabs.add(strTab_bin_content);
 		}
 		
-		//解析各个section
 		int section_num = section_head_list.size();
 		String strTabStr = strTabs.get(strTabs.size()-1);
 		char[] strTabStrArr = strTabStr.toCharArray();
 		for (int i = 0; i < section_num; i++) {
-			
 			Section_head_struct section_head_struct = new Section_head_struct();
 			section_head_struct = section_head_list.get(i);
 			int startt = Integer.parseInt(section_head_struct.sh_name, 16);
@@ -125,90 +185,66 @@ public class ElfPaser {
 			}
 			System.out.println(section_name);
 			section_head_list.get(i).sh_name = section_name;
-			if (section_name.equals(".text")) {
-				System.out.println("parse the text section:");
-				parseTextSection(section_head_struct);
-				
-			}
-			else if (section_name.equals(".plt")){
-				//....
-			}
-		}
-	}
-	
-	//解析 text Section
-	public void parseTextSection(Section_head_struct section_head_struct){
-		int start = Integer.parseInt(section_head_struct.sh_offset, 16);
-		int end = start + Integer.parseInt(section_head_struct.sh_size, 16) - 1;
-		String bin_content = dealText(start, end);
-		System.out.println(bin_content);
-		ArrayList<String> _32bytesArr = coverBinContentTo32bytesArr(bin_content);
-		int _32bytesCount = _32bytesArr.size();
-		DisassemblerARM diassembler = new DisassemblerARM();
-		
-		for (int i = 0; i < _32bytesCount; i++) {
-			ByteBuffer sendBuffer=ByteBuffer.wrap(HexString2Bytes(_32bytesArr.get(i)));
-			DisassembledInstruction disassembledInstruction;
-			try {
-				IAddress address = new Addr32();
-				disassembledInstruction = diassembler.disassembleOneInstruction(address, sendBuffer, null);
-				disassembledInstruction.toString();
-			} catch (CoreException e) {
-				e.printStackTrace();
-			}
 			
 		}
 	}
 	
-	//提取区域内的二进制内容
-	public String dealHead(int start,int end){
-		int start_line = start/16+1;
-		int real_start_index = end%16;
+	/*
+	 * 解析 text Section
+	 */
+	public void parseTextSection(Section_head_struct section_head_struct){
 		
-		int end_line = end/16+1 ;
-		String bin_bytes[] = getLine(binpath,start_line,end_line).trim().split(" ");
-		String base = "";
-		int byte_num = end - start + 1;
-		for(int i=0;i<byte_num;i++){
-			base+=bin_bytes[real_start_index-i];
-		}
-		return base;
-	}
-	public String dealHeadSection(int start,int end){
-		int start_line = start/16+1;
-		int real_start_index = start%16;
-		int end_line = end/16+1 ;
-		String bin_bytes[] = getLine(binpath,start_line,end_line).trim().split(" ");
-		String base = "";
-		String base_str = "";
-		int byte_num = end - start + 1;
-		for(int i=0;i<byte_num;i++){
-			int dec = Integer.parseInt(bin_bytes[real_start_index+i].trim(), 16);
-			base_str+=String.format("%c",dec);
-			base+=bin_bytes[real_start_index+1];
-		}
-		return base_str;
-	}
-	public String dealText(int start,int end){
-		int start_line = start/16+1;
-		int real_start_index = start%16;
-		int end_line = end/16+1 ;
-		String bin_bytes[] = getLine(binpath,start_line,end_line).replace("\r\n", "").trim().split(" ");
-		String base = "";
-		int byte_num = end - start + 1;
-		for(int i=0;i<byte_num;i++){
-			base+=bin_bytes[real_start_index+i];
-		}
-		return base;
-	}
-	public void format(File file){
+		int start = Integer.parseInt(section_head_struct.sh_offset, 16);
+		int startLineNum = start/4;
+		int LineNum = Integer.parseInt(section_head_struct.sh_size, 16)/4;
+		int endLineNum = startLineNum + LineNum -1;
 		
+		InputStream is;
+		BufferedReader reader;
+		String line = "";
+		int lineCount = 0;
+		try {
+			is = new FileInputStream(this.single_hexelf_path);
+			reader = new BufferedReader(new InputStreamReader(is, "UTF-8"));
+			DisassembledInstruction disassembledInstruction;
+			DisassemblerARM diassembler = new DisassemblerARM();
+			while ((line = reader.readLine()) != null){
+				if (lineCount >= startLineNum && lineCount <= endLineNum) {
+					//获取指令地址
+					byte[] addr = new byte[4];
+					addr[3] = (byte)(lineCount & 0xff);
+					addr[2] = (byte)(lineCount>>8 & 0xff);
+					addr[1] = (byte)(lineCount>>16 & 0xff);
+					addr[0] = (byte)(lineCount>>24 & 0xff);
+					IAddress address = new Addr32(addr);
+					//获取指令机器代码
+					ByteBuffer sendBuffer=ByteBuffer.wrap(HexString2Bytes(line));
+					//将机器指令转换成汇编代码
+					try {
+						disassembledInstruction = diassembler.disassembleOneInstruction(address, sendBuffer, null);
+						disassembledInstruction.toString();
+					} catch (CoreException e) {
+						e.printStackTrace();
+					}
+					
+				}
+				lineCount++;
+			}
+			is.close();
+		} catch (IOException e) {
+			e.printStackTrace();
+		}
+	}
+	
+	/*
+	 * 将elf解析成不规则的16进制机器代码
+	 */
+	public void parseElf2Hex(File elf_file){
 		File jadBat = new File(toolsFileUrl+"//bin2hex.bat");
 		BufferedWriter bw;
 		try {
 			bw = new BufferedWriter(new OutputStreamWriter(new FileOutputStream(jadBat)));
-			bw.write(toolsFileUrl+"//bin2hex.exe "+path+" "+despath);
-			System.out.println(toolsFileUrl+"//bin2hex.exe "+path+" "+despath);
+			bw.write(toolsFileUrl+"//bin2hex.exe "+this.elf_file+" "+this.hex_elf_path);
 			bw.close();
 			Process p = null;
 			p = Runtime.getRuntime().exec(toolsFileUrl+"//bin2hex.bat");
@@ -226,48 +262,14 @@ public class ElfPaser {
 			File jadFile = new File(toolsFileUrl+"//bin2hex.bat");
 			jadFile.delete();
 		}
-		
-		
-		file = new File(despath);
-		InputStream is;
-		BufferedReader reader;
-		String line = "";
-		//String outline = "00h:";
-		String outline = "";
-		char[] lineChar;
-		int count;
-		int count2 = 0;
-		int lineCount = 0;
-		try {
-			is = new FileInputStream(file.getAbsolutePath());
-			PrintWriter out = new PrintWriter(new BufferedWriter(new FileWriter(new File(binpath))));
-			reader = new BufferedReader(new InputStreamReader(is, "UTF-8"));
-			while ((line = reader.readLine()) != null){
-				lineChar = line.toCharArray();
-				count = lineChar.length/2;
-				for(int i=0;i<count;i++){
-					outline += " "+lineChar[i*2]+lineChar[i*2+1];
-					count2++;
-					if(count2==16){
-						//System.out.println(outline);
-						out.println(outline);
-						lineCount++;
-						count2 = 0;
-						//outline = ""+Integer.toHexString(lineCount)+"0h:";
-						outline = "";
-					}
-				}
-			}
-			//System.out.println(outline);
-			out.println(outline);
-			out.close();
-			is.close();
-			file.delete();
-		} catch (IOException e) {
-			e.printStackTrace();
-		}
+		this.hex_elf_file = new File(this.hex_elf_path);
 	}
-	public String getLine(String fileName, int startLine, int endLine){
+	
+	
+	/*
+	 * 根据行号提取文件里的内容(startLine<=Line<=endLine)
+	 */
+	public String getMultiLineString(String fileName, int startLine, int endLine){
 		StringBuffer sf = new StringBuffer();
 		LineNumberReader lnr;
 		try {
@@ -278,7 +280,7 @@ public class ElfPaser {
 			int curLineNumber = lnr.getLineNumber();
 			if(curLineNumber >= startLine && curLineNumber <= endLine){
 				sf.append(buff);
-				sf.append("\r\n");
+				//sf.append(System.getProperty("line.separator"));
 			}
 			buff = lnr.readLine();
 		}
@@ -370,7 +372,49 @@ public class ElfPaser {
     }
 	
 	
-	public ArrayList<String> coverBinContentTo32bytesArr(String bin_content){
+	/*
+	 * 将不规则的16进制机器代码转换成一行一个4字节的机器代码
+	 */
+	private void parseHex2SingleHex(File hex_elf_file){
+		
+		
+		String hexelf_filepath = hex_elf_file.getAbsolutePath();
+		
+		InputStream is;
+		BufferedReader reader;
+		String line = "";
+		String outline = "";
+		String leftline = "";
+		char []lineChar = new char[100];
+		int pairCount = 0;
+		int fourCount = 0;
+		try {
+			is = new FileInputStream(hexelf_filepath);
+			PrintWriter out = new PrintWriter(new BufferedWriter(new FileWriter(new File(this.single_hexelf_path))));
+			reader = new BufferedReader(new InputStreamReader(is, "UTF-8"));
+			while ((line = reader.readLine()) != null){
+				line = leftline + line;
+				lineChar = line.toCharArray();
+				pairCount = lineChar.length/2;
+				fourCount = pairCount/4;
+				leftline = line.substring(fourCount*8);
+				for(int i=0;i<fourCount;i++){
+					outline = ""+lineChar[i*8]+lineChar[i*8+1]+lineChar[i*8+2]+lineChar[i*8+3]
+							  +lineChar[i*8+4]+lineChar[i*8+5]+lineChar[i*8+6]+lineChar[i*8+7];
+					out.println(outline);
+				}
+			}
+			out.close();
+			is.close();
+		} catch (IOException e) {
+			e.printStackTrace();
+		}
+	}
+	
+	
+	
+	
+ 	public ArrayList<String> coverBinContentTo32bytesArr(String bin_content){
 		ArrayList<String> _32bytesArr = new ArrayList<String>();
 		String _32byte = "";
 		for (int i = 0; i < bin_content.length(); i++) {
@@ -410,16 +454,16 @@ public class ElfPaser {
 
 
 class Section_head_struct{
-	String sh_name = "";
-	String sh_type = "";
-	String sh_flags = "";
-	String sh_addr = "";
-	String sh_offset = "";
-	String sh_size = "";
-	String sh_link = "";
-	String sh_info = "";
-	String sh_addralign = "";
-	String sh_entsize = "";
+	public String sh_name = "";
+	public String sh_type = "";
+	public String sh_flags = "";
+	public String sh_addr = "";
+	public String sh_offset = "";
+	public String sh_size = "";
+	public String sh_link = "";
+	public String sh_info = "";
+	public String sh_addralign = "";
+	public String sh_entsize = "";
 }
 
 class Elf_head_struct {
